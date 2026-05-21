@@ -975,8 +975,10 @@ app.post('/api/bookings', authRequired, async (req, res) => {
 
     const bookingObj = populatedBooking.toObject();
     const now = new Date();
-    // Only expose OTP during the valid window (inclusive)
-    if (!bookingObj.validFrom || !bookingObj.validTo || now < new Date(bookingObj.validFrom) || now > new Date(bookingObj.validTo)) {
+    // Add 5 minute buffer to account for clock skew between client and server
+    const bufferMs = 5 * 60 * 1000;
+    // Only expose OTP during the valid window (inclusive) - compare UTC timestamps with buffer
+    if (!bookingObj.validFrom || !bookingObj.validTo || now < new Date(bookingObj.validFrom.getTime() - bufferMs) || now > new Date(bookingObj.validTo.getTime() + bufferMs)) {
       delete bookingObj.otp;
     }
 
@@ -998,11 +1000,13 @@ app.get('/api/bookings/me', authRequired, async (req, res) => {
       .sort({ createdAt: -1 });
 
     const now = new Date();
+    // Add 5 minute buffer to account for clock skew between client and server
+    const bufferMs = 5 * 60 * 1000;
     const bookingsWithQr = await Promise.all(
       bookings.map(async (booking) => {
         const obj = booking.toObject();
-        // Only expose OTP during the valid window
-        if (!obj.validFrom || !obj.validTo || now < obj.validFrom || now > obj.validTo) {
+        // Only expose OTP during the valid window with buffer for clock skew
+        if (!obj.validFrom || !obj.validTo || now < new Date(obj.validFrom.getTime() - bufferMs) || now > new Date(obj.validTo.getTime() + bufferMs)) {
           delete obj.otp;
         }
 
@@ -1157,7 +1161,9 @@ app.post('/api/bookings/verify', authRequired, conductorOrAdmin, async (req, res
     }
 
     const now = new Date();
-    if (now < booking.validFrom || now > booking.validTo) {
+    // Add 5 minute buffer to account for clock skew between client and server
+    const bufferMs = 5 * 60 * 1000;
+    if (now < new Date(booking.validFrom.getTime() - bufferMs) || now > new Date(booking.validTo.getTime() + bufferMs)) {
       return res.status(400).json({ message: 'Ticket is outside the valid travel window' });
     }
 
