@@ -940,7 +940,13 @@ app.post('/api/bookings', authRequired, async (req, res) => {
       return res.status(400).json({ message: `Seats must be between 1 and ${bus.seats}` });
     }
 
-    const [startTime, endTime] = timingLabel.split(' - ');
+    // Robust parsing of timingLabel to extract start and end times (handles "-", "to", with or without spaces)
+    const timingMatch = timingLabel.match(/^(.+?)\s*(?:-|to)\s*(.+)$/i);
+    if (!timingMatch) {
+      return res.status(400).json({ message: 'Invalid timing format. Expected "start - end" or "start to end"' });
+    }
+    const startTime = timingMatch[1].trim();
+    const endTime = timingMatch[2].trim();
     const validFrom = parseTime(travelDate, startTime);
     const validTo = parseTime(travelDate, endTime);
     const otp = createOtp();
@@ -969,8 +975,8 @@ app.post('/api/bookings', authRequired, async (req, res) => {
 
     const bookingObj = populatedBooking.toObject();
     const now = new Date();
-    // Only expose OTP during the valid window
-    if (!bookingObj.validFrom || !bookingObj.validTo || now < bookingObj.validFrom || now > bookingObj.validTo) {
+    // Only expose OTP during the valid window (inclusive)
+    if (!bookingObj.validFrom || !bookingObj.validTo || now < new Date(bookingObj.validFrom) || now > new Date(bookingObj.validTo)) {
       delete bookingObj.otp;
     }
 
