@@ -974,13 +974,6 @@ app.post('/api/bookings', authRequired, async (req, res) => {
     const qrDataUrl = await QRCode.toDataURL(qrToken);
 
     const bookingObj = populatedBooking.toObject();
-    const now = new Date();
-    // Add 5 minute buffer to account for clock skew between client and server
-    const bufferMs = 5 * 60 * 1000;
-    // Only expose OTP during the valid window (inclusive) - compare UTC timestamps with buffer
-    if (!bookingObj.validFrom || !bookingObj.validTo || now < new Date(bookingObj.validFrom.getTime() - bufferMs) || now > new Date(bookingObj.validTo.getTime() + bufferMs)) {
-      delete bookingObj.otp;
-    }
 
     return res.status(201).json({
       booking: {
@@ -999,16 +992,9 @@ app.get('/api/bookings/me', authRequired, async (req, res) => {
       .populate('bus')
       .sort({ createdAt: -1 });
 
-    const now = new Date();
-    // Add 5 minute buffer to account for clock skew between client and server
-    const bufferMs = 5 * 60 * 1000;
     const bookingsWithQr = await Promise.all(
       bookings.map(async (booking) => {
         const obj = booking.toObject();
-        // Only expose OTP during the valid window with buffer for clock skew
-        if (!obj.validFrom || !obj.validTo || now < new Date(obj.validFrom.getTime() - bufferMs) || now > new Date(obj.validTo.getTime() + bufferMs)) {
-          delete obj.otp;
-        }
 
         return {
           ...obj,
@@ -1025,17 +1011,20 @@ app.get('/api/bookings/me', authRequired, async (req, res) => {
 
 app.post('/api/bookings/verify', authRequired, conductorOrAdmin, async (req, res) => {
   try {
-    const { bookingId: bodyId, qrToken: bodyToken, otp: bodyOtp } = req.body || {};
+    const { bookingId: bodyId, qrToken: bodyToken, otp: bodyOtp, clientTime } = req.body || {};
     const { bookingId: queryId, qrToken: queryToken, otp: queryOtp } = req.query || {};
 
     const bookingId = bodyId || queryId;
     const qrToken = bodyToken || queryToken;
     const otp = bodyOtp || queryOtp;
 
+    // Use client time if provided, otherwise fall back to server time
+    const now = clientTime ? new Date(clientTime) : new Date();
+
     console.log('Verification request received:', {
       body: req.body,
       query: req.query,
-      resolved: { bookingId, qrToken }
+      resolved: { bookingId, qrToken, now: now.toISOString() }
     });
 
     if (!bookingId && !qrToken && !otp) {
@@ -1055,7 +1044,6 @@ app.post('/api/bookings/verify', authRequired, conductorOrAdmin, async (req, res
           return res.status(404).json({ message: 'Booking with provided OTP not found' });
         }
       } else {
-        const now = new Date();
         booking = await Booking.findOne({ otp: String(otp), validFrom: { $lte: now }, validTo: { $gte: now } }).populate('bus').populate('user', 'name email role');
         if (!booking) {
           return res.status(404).json({ message: 'Active booking with provided OTP not found' });
@@ -1104,7 +1092,6 @@ app.post('/api/bookings/verify', authRequired, conductorOrAdmin, async (req, res
           return res.status(400).json({ message: 'Offline ticket has invalid validity window' });
         }
 
-        const now = new Date();
         if (now < validFrom || now > validTo) {
           return res.status(400).json({ message: 'Ticket is outside the valid travel window' });
         }
@@ -1160,10 +1147,7 @@ app.post('/api/bookings/verify', authRequired, conductorOrAdmin, async (req, res
       return res.status(400).json({ message: 'Ticket already verified', booking: { ...booking.toObject(), qrDataUrl } });
     }
 
-    const now = new Date();
-    // Add 5 minute buffer to account for clock skew between client and server
-    const bufferMs = 5 * 60 * 1000;
-    if (now < new Date(booking.validFrom.getTime() - bufferMs) || now > new Date(booking.validTo.getTime() + bufferMs)) {
+    if (now < booking.validFrom || now > booking.validTo) {
       return res.status(400).json({ message: 'Ticket is outside the valid travel window' });
     }
 
