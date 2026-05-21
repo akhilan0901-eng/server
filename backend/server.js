@@ -194,6 +194,42 @@ function createQrToken(prefix, id) {
   return `${prefix}:${id}`;
 }
 
+const IST_OFFSET_MINUTES = 330;
+
+function parseDateTimeInIST(dateValue, timeValue) {
+  const base = String(timeValue || '').trim();
+  const match = base.match(/^(\d{1,2}):(\d{2})(?:\s*([AaPp][Mm]))?$/);
+
+  if (!match) {
+    const fallback = new Date(`${dateValue} ${base}`);
+    if (!Number.isNaN(fallback.getTime())) {
+      return fallback;
+    }
+
+    return null;
+  }
+
+  let hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const period = match[3] ? match[3].toUpperCase() : null;
+
+  if (period === 'AM' && hours === 12) {
+    hours = 0;
+  }
+
+  if (period === 'PM' && hours !== 12) {
+    hours += 12;
+  }
+
+  const [year, month, day] = String(dateValue).split('-').map(Number);
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  const utcMillis = Date.UTC(year, month - 1, day, hours, minutes, 0, 0) - (IST_OFFSET_MINUTES * 60 * 1000);
+  return new Date(utcMillis);
+}
+
 function normalizeRemoteUrl(value) {
   if (!value || typeof value !== 'string') {
     return '';
@@ -470,32 +506,11 @@ async function buildBusQrDataUrl(busDoc) {
 }
 
 function parseTime(dateValue, timeValue) {
-  if (!timeValue) return new Date(dateValue);
+  const parsed = parseDateTimeInIST(dateValue, timeValue);
 
-  const str = String(timeValue).trim();
-  // Match formats like '8:00', '08:00', '8:00 AM', '08:00PM', case-insensitive
-  const m = str.match(/^(\d{1,2}):(\d{2})(?:\s*([AaPp][Mm]))?$/);
-  if (m) {
-    let hours = Number(m[1]);
-    const minutes = Number(m[2]);
-    const period = m[3] ? m[3].toUpperCase() : null;
-
-    if (period) {
-      if (period === 'AM') {
-        if (hours === 12) hours = 0;
-      } else if (period === 'PM') {
-        if (hours !== 12) hours += 12;
-      }
-    }
-
-    const date = new Date(dateValue);
-    date.setHours(hours, minutes, 0, 0);
-    return date;
+  if (parsed) {
+    return parsed;
   }
-
-  // Fallback: try constructing from combined date+time string
-  const fallback = new Date(`${dateValue} ${str}`);
-  if (!isNaN(fallback.getTime())) return fallback;
 
   throw new Error(`Invalid time format: ${timeValue}`);
 }
